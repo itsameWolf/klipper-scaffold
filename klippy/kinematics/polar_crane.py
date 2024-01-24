@@ -82,10 +82,59 @@ class PolarCraneKinematics:
     def home(self, homing_state):
         # Always home XY together
         homing_axes = homing_state.get_axes()
-        home_xy = 0 in homing_axes or 1 in homing_axes
+        home_x = 0 in homing_axes 
+        home_y = 1 in homing_axes
         home_z = 2 in homing_axes
+        
 
-        if home_xy:
+        if home_x:
+            homing_state.set_axes([0])
+            rails = [self.rails[0], self.rails[1]]
+            
+            col_endstop = rails[0].get_homing_info().position_endstop
+            col_min, col_max = rails[0].get_range()
+            
+            arm_endstop = rails[1].get_homing_info().position_endstop
+            arm_min, arm_max = rails[1].get_range()
+            
+            # Swap to linear kinematics
+            toolhead = self.printer.lookup_object('toolhead')
+            toolhead.flush_step_generation()
+            
+            steppers = self.get_polar_steppers()
+            
+            kinematics = [self.cartesian_kinematics_COL,
+                          self.cartesian_kinematics_ARM]
+            prev_sks    = [stepper.set_stepper_kinematics(kinematic)
+                            for stepper, kinematic in zip(steppers, kinematics)]
+            
+            try:
+                homepos  = [col_endstop, arm_endstop, None, None]
+                hil = rails[0].get_homing_info()
+                if hil.positive_dir:
+                    forcepos = [0, 0, None, None]
+                else:
+                    forcepos = [col_max, 0, None, None]
+                
+                homing_state.home_rails([rails[0]], forcepos, homepos)
+
+                for stepper, prev_sk in zip(steppers, prev_sks):
+                    stepper.set_stepper_kinematics(prev_sk)
+
+                [x,y] = self.polar_to_cart(
+                    rails[0].get_homing_info().position_endstop,
+                    rails[1].get_homing_info().position_endstop)
+                    
+                toolhead.set_position( [x, y, 0, 0], (0, 1))
+                toolhead.flush_step_generation()
+
+            except Exception as e:
+                for stepper, prev_sk in zip(steppers, prev_sks):
+                    stepper.set_stepper_kinematics(prev_sk)
+                toolhead.flush_step_generation()
+                raise
+            
+        if home_y:
             homing_state.set_axes([0, 1])
             rails = [self.rails[0], self.rails[1]]
             
@@ -112,10 +161,9 @@ class PolarCraneKinematics:
                 if hil.positive_dir:
                     forcepos = [0, 0, None, None]
                 else:
-                    forcepos = [col_max, arm_max, None, None]
-                logging.info("5be home LR %s %s %s", rails, forcepos, homepos);
-
-                homing_state.home_rails(rails, forcepos, homepos)
+                    forcepos = [0, arm_max, None, None]
+                
+                homing_state.home_rails([rails[1]], forcepos, homepos)
 
                 for stepper, prev_sk in zip(steppers, prev_sks):
                     stepper.set_stepper_kinematics(prev_sk)
@@ -126,8 +174,6 @@ class PolarCraneKinematics:
                     
                 toolhead.set_position( [x, y, 0, 0], (0, 1))
                 toolhead.flush_step_generation()
-                #self.homedXY = True
-                logging.info("Homed LR done")
 
             except Exception as e:
                 for stepper, prev_sk in zip(steppers, prev_sks):
